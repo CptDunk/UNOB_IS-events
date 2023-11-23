@@ -153,7 +153,7 @@ def get_demodata():
         return json_dict
 
 
-    with open("./systemdata.json", "r") as f:
+    with open("./systemdata.json", "r", encoding="UTF-8") as f:
         jsonData = json.load(f, object_hook=datetime_parser)
 
     return jsonData
