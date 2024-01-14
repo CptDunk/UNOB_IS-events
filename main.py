@@ -5,9 +5,8 @@ import asyncio
 
 from fastapi import FastAPI
 
-from icalendar import Calendar, Event
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
 
 
@@ -24,13 +23,13 @@ from gql_events.GraphTypeDefinitions import Query
 ## Definice DB typu (pomoci SQLAlchemy https://www.sqlalchemy.org/)
 ## SQLAlchemy zvoleno kvuli moznost komunikovat s DB asynchronne
 ## https://docs.sqlalchemy.org/en/14/core/future.html?highlight=select#sqlalchemy.future.select
-from gql_events.DBDefinitions import startEngine, ComposeConnectionString
+from gql_events.DBDefinitions import startEngine, ComposeConnectionString, EventModel
 
 ## Zabezpecuje prvotni inicializaci DB a definovani Nahodne struktury pro "Univerzity"
 # from gql_workflow.DBFeeder import createSystemDataStructureRoleTypes, createSystemDataStructureGroupTypes
 
 connectionString = ComposeConnectionString()
-
+session = None
 
 def singleCall(asyncFunc):
     """Dekorator, ktery dovoli, aby dekorovana funkce byla volana (vycislena) jen jednou. Navratova hodnota je zapamatovana a pri dalsich volanich vracena.
@@ -118,62 +117,53 @@ app.mount("/gql", graphql_app)
 
 
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import PlainTextResponse
 
-app = FastAPI()
-
-@app.post("/ical")
-async def create_ical():
-    try:
-        # Set the iCal data as a string
-        ical_data = """
-        BEGIN:VCALENDAR
-        VERSION:2.0
-        PRODID:-//hacksw/handcal//NONSGML v1.0//EN
-        BEGIN:VEVENT
-        UID:uid1@example.com
-        DTSTAMP:19970714T170000Z
-        ORGANIZER;CN=<link>John Doe</link>:MAILTO:john.doe@example.com
-        DTSTART:19970714T170000Z
-        DTEND:19970715T040000Z
-        SUMMARY:Bastille Day Party
-        GEO:48.85299;2.36885
-        END:VEVENT
-        END:VCALENDAR
-        """
-
-        # Set the appropriate response headers
-        headers = {
-            "Content-Disposition": "attachment; filename=calendar.ics",
-            "Content-Type": "text/calendar",
-        }
-
-        # Return the iCal data as the response
-        return PlainTextResponse(ical_data, headers=headers)
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+from fastapi import FastAPI, Response
+from fastapi.responses import StreamingResponse
+import os
+import gql_events.GQLHelper as Helper
 
 @app.get("/ical")
 async def get_ical():
-    ical_data = """BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example Corp//Calendar Application//EN\r\nBEGIN:VEVENT\r\nUID:9876543210\r\nDTSTAMP:20230215T150000Z\r\nDTSTART:20231224T180000Z\r\nDTEND:20231224T200000Z\r\nSUMMARY:Christmas Eve Celebration\r\nDESCRIPTION:Join us for a festive Christmas Eve celebration filled with joy and merriment.\r\nLOCATION:Your Home\r\nEND:VEVENT\r\nEND:VCALENDAR"""
-    return PlainTextResponse(ical_data, media_type="text/calendar")
+    
+    await Helper.get_Events()
+    """
+    endList = await Helper.get_Events()
+    if endList != None:
+        for object in endList:
+            print(object)
+            print(object.name)
+            print(object.startdate)
+            print(object.enddate)
+            print(object.lastchange)
+            print(object.id)
+            print("")
+    """
+    file_name = "dummy_calendar.ics"
+    file_path = os.path.join(os.getcwd(), file_name)
+    
+
+    # Stream the file to the client
+    if os.path.exists(file_path):
+        file_like = open(file_path, mode="rb")
+        response = StreamingResponse(file_like, media_type="text/calendar")
+        response.headers["Content-Disposition"] = f"attachment; filename={file_name}"
+        return response
+    else:
+        return Response("File not found", status_code=404)
+
+
+"""
+@app.get("/gql")
+async def graphiql(request: Request):
+    return await graphql_app.render_graphql_ide(request)
+"""
+
 @app.on_event("startup")
 async def startup_event():
     initizalizedEngine = await RunOnceAndReturnSessionMaker()
+    session = initizalizedEngine
     return None
 
 
 print("All initialization is done")
-
-@app.get('/hello')
-def hello():
-    return {'ICAL': 'FORMAT',
-            'BEGIN': 'VCALENDAR'}
-
-###########################################################################################################################
-#
-# pokud jste pripraveni testovat GQL funkcionalitu, rozsirte apollo/server.js
-#
-###########################################################################################################################
