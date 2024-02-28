@@ -1,9 +1,10 @@
+import io
 from typing import List
 import typing
 
 import asyncio
 
-from fastapi import FastAPI
+
 
 
 from fastapi import FastAPI, Request, HTTPException
@@ -118,52 +119,49 @@ app.mount("/gql", graphql_app)
 
 
 
-from fastapi import FastAPI, Response
 from fastapi.responses import StreamingResponse
-import os
+from starlette.requests import Request
+from starlette.responses import Response
 import gql_events.GQLHelper as Helper
 
-@app.get("/ical")
-async def get_ical():
-    
-    await Helper.get_Events()
-    """
-    endList = await Helper.get_Events()
-    if endList != None:
-        for object in endList:
-            print(object)
-            print(object.name)
-            print(object.startdate)
-            print(object.enddate)
-            print(object.lastchange)
-            print(object.id)
-            print("")
-    """
-    file_name = "dummy_calendar.ics"
-    file_path = os.path.join(os.getcwd(), file_name)
-    
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
-    # Stream the file to the client
-    if os.path.exists(file_path):
-        file_like = open(file_path, mode="rb")
-        response = StreamingResponse(file_like, media_type="text/calendar")
-        response.headers["Content-Disposition"] = f"attachment; filename={file_name}"
+class MKCMiddleware(BaseHTTPMiddleware):
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
+        if request.method == "MKCALENDAR":
+
+            token = request.url.path.split('/')[-1]
+
+            myCalendar = await Helper.get_Events(token)
+
+            if len(myCalendar.events) > 0:
+
+                ical_data = myCalendar.serialize()
+                print(ical_data)
+
+                response = Response(content=ical_data, media_type="text/calendar")
+                return response
+            else:
+                return Response("Calendar not found", status_code=404)
+        else:
+            return await call_next(request)
+
+
+app.add_middleware(MKCMiddleware)
+
+
+@app.get("/ical/{token}")
+async def get_ical(token: str):
+
+    myCalendar = await Helper.get_Events(token)
+    if len(myCalendar.events) > 0:
+        data = myCalendar.serialize()
+
+        response = StreamingResponse(io.StringIO(data), media_type="text/calendar")
         return response
     else:
-        return Response("File not found", status_code=404)
-
-
-"""
-@app.get("/gql")
-async def graphiql(request: Request):
-    return await graphql_app.render_graphql_ide(request)
-"""
-
-@app.on_event("startup")
-async def startup_event():
-    initizalizedEngine = await RunOnceAndReturnSessionMaker()
-    session = initizalizedEngine
-    return None
-
+        return Response("Calendar not Found", status_code=404)
 
 print("All initialization is done")
