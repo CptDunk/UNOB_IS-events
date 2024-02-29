@@ -1,21 +1,19 @@
 import io
-from typing import List
-import typing
-
-import asyncio
-
-
-
-
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import PlainTextResponse
+from gql_events.DBFeeder import initDB
+from strawberry.asgi import GraphQL
+from gql_events.Dataloaders import createLoaders_3
+from fastapi.responses import StreamingResponse
+from starlette.requests import Request
+from starlette.responses import Response
+import gql_events.GQLHelper as Helper
+from starlette.middleware.base import (BaseHTTPMiddleware,
+                                       RequestResponseEndpoint)
+from gql_events.GraphTypeDefinitions import schema
+from gql_events.DBDefinitions import (startEngine,
+                                      ComposeConnectionString,
+                                      EventModel)
 
-
-
-
-
-import strawberry
-from strawberry.fastapi import GraphQLRouter
 
 ## Definice GraphQL typu (pomoci strawberry https://strawberry.rocks/)
 ## Strawberry zvoleno kvuli moznosti mit federovane GraphQL API (https://strawberry.rocks/docs/guides/federation, https://www.apollographql.com/docs/federation/)
@@ -24,7 +22,6 @@ from gql_events.GraphTypeDefinitions import Query
 ## Definice DB typu (pomoci SQLAlchemy https://www.sqlalchemy.org/)
 ## SQLAlchemy zvoleno kvuli moznost komunikovat s DB asynchronne
 ## https://docs.sqlalchemy.org/en/14/core/future.html?highlight=select#sqlalchemy.future.select
-from gql_events.DBDefinitions import startEngine, ComposeConnectionString, EventModel
 
 ## Zabezpecuje prvotni inicializaci DB a definovani Nahodne struktury pro "Univerzity"
 # from gql_workflow.DBFeeder import createSystemDataStructureRoleTypes, createSystemDataStructureGroupTypes
@@ -45,7 +42,6 @@ def singleCall(asyncFunc):
 
     return result
 
-from gql_events.DBFeeder import initDB
 
 @singleCall
 async def RunOnceAndReturnSessionMaker():
@@ -83,49 +79,6 @@ async def RunOnceAndReturnSessionMaker():
     return result
 
 
-from strawberry.asgi import GraphQL
-
-from gql_events.Dataloaders import createLoaders_3
-class MyGraphQL(GraphQL):
-    """Rozsirena trida zabezpecujici praci se session"""
-
-    async def __call__(self, scope, receive, send):
-        asyncSessionMaker = await RunOnceAndReturnSessionMaker()
-        async with asyncSessionMaker() as session:
-            self._session = session
-            self._user = {"id": "?"}
-            return await GraphQL.__call__(self, scope, receive, send)
-
-    async def get_context(self, request, response):
-        parentResult = await GraphQL.get_context(self, request, response)
-        asyncSessionMaker = await RunOnceAndReturnSessionMaker()
-        return {
-            **parentResult,
-            "session": self._session,
-            "asyncSessionMaker": asyncSessionMaker,
-            "user": self._user,
-            "all": await createLoaders_3(asyncSessionMaker)
-        }
-
-
-from gql_events.GraphTypeDefinitions import schema
-
-## ASGI app, kterou "moutneme"
-graphql_app = MyGraphQL(schema, graphiql=True, allow_queries_via_get=True)
-
-app = FastAPI()
-app.mount("/gql", graphql_app)
-
-
-
-
-from fastapi.responses import StreamingResponse
-from starlette.requests import Request
-from starlette.responses import Response
-import gql_events.GQLHelper as Helper
-
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-
 class MKCMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
@@ -149,6 +102,33 @@ class MKCMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
 
+class MyGraphQL(GraphQL):
+    """Rozsirena trida zabezpecujici praci se session"""
+
+    async def __call__(self, scope, receive, send):
+        asyncSessionMaker = await RunOnceAndReturnSessionMaker()
+        async with asyncSessionMaker() as session:
+            self._session = session
+            self._user = {"id": "?"}
+            return await GraphQL.__call__(self, scope, receive, send)
+
+    async def get_context(self, request, response):
+        parentResult = await GraphQL.get_context(self, request, response)
+        asyncSessionMaker = await RunOnceAndReturnSessionMaker()
+        return {
+            **parentResult,
+            "session": self._session,
+            "asyncSessionMaker": asyncSessionMaker,
+            "user": self._user,
+            "all": await createLoaders_3(asyncSessionMaker)
+        }
+
+
+## ASGI app, kterou "moutneme"
+graphql_app = MyGraphQL(schema, graphiql=True, allow_queries_via_get=True)
+
+app = FastAPI()
+app.mount("/gql", graphql_app)
 app.add_middleware(MKCMiddleware)
 
 
